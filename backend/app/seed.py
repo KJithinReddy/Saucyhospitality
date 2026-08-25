@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from app.models import Contractor, Restaurant
+from app.schemas import Specialty
+
+
+RESTAURANT = Restaurant(
+    id="rest_saucy_bistro",
+    name="Saucy Bistro",
+    address="418 Lexington Ave",
+    city="New York",
+    neighborhood="Midtown East",
+    contact_name="Maya Chen",
+)
+
+CONTRACTORS = [
+    Contractor(
+        id="ctr_reef_cold",
+        name="Andre Walsh",
+        company="Reef & Cold Commercial Refrigeration",
+        specialty=Specialty.refrigeration.value,
+        secondary_specialty=Specialty.hvac.value,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=True,
+        rating=4.9,
+        jobs_completed=214,
+        eta_minutes=28,
+        distance_miles=2.4,
+        photo_initials="AW",
+        blurb="Walk-ins, reach-ins, and ice machines for high-volume kitchens.",
+    ),
+    Contractor(
+        id="ctr_northline_hvac",
+        name="Priya Nair",
+        company="Northline HVAC",
+        specialty=Specialty.hvac.value,
+        secondary_specialty=Specialty.refrigeration.value,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=True,
+        rating=4.8,
+        jobs_completed=176,
+        eta_minutes=35,
+        distance_miles=3.1,
+        photo_initials="PN",
+        blurb="Kitchen exhaust, rooftop units, and make-up air systems.",
+    ),
+    Contractor(
+        id="ctr_lineflow_plumb",
+        name="Luis Ortega",
+        company="Lineflow Plumbing",
+        specialty=Specialty.plumbing.value,
+        secondary_specialty=None,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=True,
+        rating=4.7,
+        jobs_completed=198,
+        eta_minutes=32,
+        distance_miles=2.8,
+        photo_initials="LO",
+        blurb="Grease lines, floor drains, and warewashing plumbing.",
+    ),
+    Contractor(
+        id="ctr_arc_kitchen",
+        name="Elena Brooks",
+        company="Arc Kitchen Electric",
+        specialty=Specialty.electrical.value,
+        secondary_specialty=None,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=False,
+        rating=4.8,
+        jobs_completed=142,
+        eta_minutes=48,
+        distance_miles=4.6,
+        photo_initials="EB",
+        blurb="Commercial kitchen circuits, panels, and equipment power.",
+    ),
+    Contractor(
+        id="ctr_hearth_range",
+        name="Marcus Bell",
+        company="Hearth & Range Service",
+        specialty=Specialty.cooking_equipment.value,
+        secondary_specialty=Specialty.electrical.value,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=True,
+        rating=4.9,
+        jobs_completed=161,
+        eta_minutes=40,
+        distance_miles=3.8,
+        photo_initials="MB",
+        blurb="Ranges, ovens, fryers, and charbroilers.",
+    ),
+    Contractor(
+        id="ctr_sparkle_ware",
+        name="Sofia Alvarez",
+        company="Sparkle Warewash",
+        specialty=Specialty.dishwashing.value,
+        secondary_specialty=Specialty.plumbing.value,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=False,
+        rating=4.6,
+        jobs_completed=133,
+        eta_minutes=52,
+        distance_miles=5.1,
+        photo_initials="SA",
+        blurb="Conveyor dishwashers, booster heaters, and rinse systems.",
+    ),
+    Contractor(
+        id="ctr_shift_facilities",
+        name="Jordan Hale",
+        company="Shift Facilities",
+        specialty=Specialty.general_facilities.value,
+        secondary_specialty=None,
+        city="New York",
+        service_area="manhattan",
+        available=True,
+        emergency_available=True,
+        rating=4.7,
+        jobs_completed=248,
+        eta_minutes=25,
+        distance_miles=1.9,
+        photo_initials="JH",
+        blurb="Doors, fixtures, and general restaurant maintenance.",
+    ),
+]
+
+
+def seed_core(db) -> None:
+    if db.get(Restaurant, RESTAURANT.id) is None:
+        db.add(Restaurant(**{c.name: getattr(RESTAURANT, c.name) for c in Restaurant.__table__.columns}))
+
+    for contractor in CONTRACTORS:
+        if db.get(Contractor, contractor.id) is None:
+            db.add(Contractor(**{c.name: getattr(contractor, c.name) for c in Contractor.__table__.columns}))
+    db.commit()
