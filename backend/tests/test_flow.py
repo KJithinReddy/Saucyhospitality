@@ -12,6 +12,15 @@ from app.schemas import Category, Severity
 client = TestClient(app)
 
 
+def test_list_restaurants():
+    response = client.get("/api/restaurants")
+    assert response.status_code == 200
+    restaurants = response.json()["restaurants"]
+    assert restaurants
+    assert restaurants[0]["name"]
+    assert restaurants[0]["neighborhood"]
+
+
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
@@ -91,3 +100,38 @@ def test_fallback_triage_keywords():
     assert result.category == Category.commercial_refrigeration
     assert result.severity == Severity.critical
     assert result.source == "fallback"
+
+
+def test_mismatched_photo_does_not_keep_trade_match():
+    from app.services.triage import apply_photo_evidence
+
+    parsed = {
+        "category": "plumbing",
+        "severity": "critical",
+        "possible_issue": "Possible rodent trapped in a drainage vent",
+        "recommended_specialty": "plumbing",
+        "observations": ["Rat observed in the kitchen drain."],
+        "immediate_action": "Isolate the area and wait for a technician.",
+        "photo_matches_report": False,
+    }
+    result = apply_photo_evidence(parsed, has_photo=True)
+    assert result["category"] == "general_maintenance"
+    assert result["severity"] == "medium"
+    assert "photo" in result["observations"][0].lower()
+
+
+def test_matching_photo_keeps_reported_trade():
+    from app.services.triage import apply_photo_evidence
+
+    parsed = {
+        "category": "plumbing",
+        "severity": "high",
+        "possible_issue": "Possible drain blockage",
+        "recommended_specialty": "plumbing",
+        "observations": ["Photo shows standing water near a floor drain."],
+        "immediate_action": "Keep the area clear.",
+        "photo_matches_report": True,
+    }
+    result = apply_photo_evidence(parsed, has_photo=True)
+    assert result["category"] == "plumbing"
+    assert result["severity"] == "high"

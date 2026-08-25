@@ -31,6 +31,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+type Restaurant = { id: string; name: string; address: string; city: string; neighborhood: string; contact_name: string };
 type Contractor = {
   id: string; name: string; company: string; specialty: string; specialty_label: string;
   available: boolean; emergency_available: boolean; rating: number; jobs_completed: number;
@@ -41,7 +42,7 @@ type Assessment = { category_label: string; severity: string; possible_issue: st
 type Ticket = {
   id: string; status: string; status_label: string; title: string; description: string;
   location_note: string; urgency: string; photo_url?: string; video_url?: string; completion_note?: string;
-  created_at: string; restaurant: { name: string; address: string; neighborhood: string; contact_name: string };
+  created_at: string; restaurant: Restaurant;
   assessment?: Assessment; assigned_contractor?: Contractor; matches: { contractor: Contractor; reasons: string[]; rank: number }[]; events: Event[];
 };
 
@@ -88,9 +89,14 @@ function DateLabel({ date }: { date: string }) {
   return <>{parsed.toLocaleDateString([], { month: "short", day: "numeric" })} · {parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</>;
 }
 
+function todayLabel() {
+  return new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
+}
+
 export function SaucyApp() {
   const [pathname, setPathname] = useState("/");
   const [role, setRole] = useState<"restaurant" | "contractor">("restaurant");
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [contractorId, setContractorId] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -113,8 +119,12 @@ export function SaucyApp() {
     return () => window.removeEventListener("popstate", sync);
   }, []);
   useEffect(() => {
-    fetchApi<{ contractors: Contractor[] }>("/api/contractors")
-      .then(({ contractors: records }) => {
+    Promise.all([
+      fetchApi<{ restaurants: Restaurant[] }>("/api/restaurants"),
+      fetchApi<{ contractors: Contractor[] }>("/api/contractors"),
+    ])
+      .then(([{ restaurants }, { contractors: records }]) => {
+        setRestaurant(restaurants[0] || null);
         setContractors(records);
         const persisted = localStorage.getItem(contractorKey);
         setContractorId(persisted || records[0]?.id || "");
@@ -163,7 +173,7 @@ export function SaucyApp() {
         <button className={cn("nav-item", view === "contractor" && "nav-active")} onClick={() => navigate("/contractor")}><Wrench size={18} />Contractor network</button>
         <div className="sidebar-foot">
           <div className="safety-note"><ShieldCheck size={17} /><span>AI assessments are advisory. Always verify onsite.</span></div>
-          <div className="restaurant-mini"><span className="mini-icon"><Building2 size={16} /></span><div><b>Saucy Bistro</b><span>Midtown East, NYC</span></div><ChevronRight size={16} /></div>
+          {restaurant && <div className="restaurant-mini"><span className="mini-icon"><Building2 size={16} /></span><div><b>{restaurant.name}</b><span>{restaurant.neighborhood}, {restaurant.city}</span></div><ChevronRight size={16} /></div>}
         </div>
       </aside>
       <main className="main">
@@ -201,7 +211,7 @@ function RestaurantDashboard({ tickets, onReport, onOpen }: { tickets: Ticket[];
   const fastestEta = etas.length ? `${Math.min(...etas)}m` : "—";
   const resolved = tickets.filter(isResolved).length;
   return <section className="page">
-    <div className="hero-row"><div><p className="eyebrow">TUESDAY, AUGUST 25</p><h1>Keep service moving.</h1><p className="subhead">Report a facility issue and get the right restaurant technician on it.</p></div><button className="button button-primary" onClick={onReport}><Plus size={18} />Report an issue</button></div>
+    <div className="hero-row"><div><p className="eyebrow">{todayLabel()}</p><h1>Keep service moving.</h1><p className="subhead">Report a facility issue and get the right restaurant technician on it.</p></div><button className="button button-primary" onClick={onReport}><Plus size={18} />Report an issue</button></div>
     <div className="stat-grid">
       <Stat icon={<Wrench />} value={String(openTickets.length).padStart(2, "0")} label="Active repairs" tone="coral" />
       <Stat icon={<Clock3 />} value={fastestEta} label="Fastest ETA" tone="blue" />
@@ -225,9 +235,9 @@ function TicketCard({ ticket, onOpen }: { ticket: Ticket; onOpen: (id: string) =
 }
 
 function ReportIssue({ onCancel, onCreated, setNotice }: { onCancel: () => void; onCreated: (id: string) => void; setNotice: (value: string) => void }) {
-  const [description, setDescription] = useState("The walk-in refrigerator isn't getting cold and water is leaking near the unit.");
-  const [location, setLocation] = useState("Walk-in cooler, kitchen back line");
-  const [urgency, setUrgency] = useState("critical");
+  const [description, setDescription] = useState("");
+  const [location, setLocation] = useState("");
+  const [urgency, setUrgency] = useState("medium");
   const [photo, setPhoto] = useState<File | null>(null);
   const [video, setVideo] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -248,7 +258,7 @@ function ReportIssue({ onCancel, onCreated, setNotice }: { onCancel: () => void;
   return <section className="page report-page"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to dashboard</button><div className="report-heading"><span className="eyebrow">NEW REPAIR REQUEST</span><h1>What needs attention?</h1><p>Share what’s happening. Saucy will organize the issue and find a qualified technician.</p></div>
     <form className="report-grid" onSubmit={submit}>
       <div className="form-card form-main"><label className="field-label">Describe the issue <span>Required</span></label><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder="Example: The walk-in refrigerator is warm and water is pooling near the door." />
-        <div className="form-divider" /><label className="field-label">Where is it happening?</label><div className="input-with-icon"><MapPin size={17} /><input value={location} onChange={(event) => setLocation(event.target.value)} /></div>
+        <div className="form-divider" /><label className="field-label">Where is it happening?</label><div className="input-with-icon"><MapPin size={17} /><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Example: Walk-in cooler, kitchen back line" /></div>
         <div className="form-divider" /><label className="field-label">How urgent is this?</label><div className="urgency-grid">{[["critical","Critical","Food safety or service stopped"],["high","High","Affects operations today"],["medium","Medium","Needs attention soon"],["low","Low","Can be scheduled"]].map(([id,label,copy]) => <button type="button" key={id} onClick={() => setUrgency(id)} className={cn("urgency-option", urgency === id && "urgency-selected")}><span className={cn("urgency-dot", `dot-${id}`)} /> <span><b>{label}</b><small>{copy}</small></span><span className="radio">{urgency === id && <Check size={13} />}</span></button>)}</div>
       </div>
       <div className="form-card evidence-card"><div><label className="field-label">Add visual evidence <span>Optional</span></label><p className="field-help">A photo helps the technician prepare. Video is shared with the technician, not analyzed.</p></div>
@@ -261,11 +271,19 @@ function ReportIssue({ onCancel, onCreated, setNotice }: { onCancel: () => void;
   </section>;
 }
 
+function dispatchStatus(contractor: Contractor, tickets: Ticket[]) {
+  const onJob = tickets.some((ticket) => ticket.assigned_contractor?.id === contractor.id && ["accepted", "en_route", "in_progress"].includes(ticket.status));
+  if (onJob) return { tone: "busy", label: "On a job" };
+  if (contractor.available) return { tone: "available", label: "Available for dispatch" };
+  return { tone: "unavailable", label: "Unavailable" };
+}
+
 function ContractorDashboard({ tickets, contractors, contractorId, onSelect, onOpen }: { tickets: Ticket[]; contractors: Contractor[]; contractorId: string; onSelect: (id: string) => void; onOpen: (id: string) => void }) {
   const filtered = tickets.filter((ticket) => ticket.assigned_contractor?.id === contractorId || (ticket.status === "matching" && ticket.matches.some((match) => match.contractor.id === contractorId)));
   const contractor = contractors.find((item) => item.id === contractorId);
+  const status = contractor ? dispatchStatus(contractor, tickets) : null;
   return <section className="page"><div className="hero-row contractor-hero"><div><p className="eyebrow">CONTRACTOR NETWORK</p><h1>Jobs worth taking.</h1><p className="subhead">Accept qualified restaurant work and keep every repair moving.</p></div><div className="persona-select"><label>Viewing as</label><select value={contractorId} onChange={(event) => onSelect(event.target.value)}>{contractors.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.company}</option>)}</select></div></div>
-    {contractor && <div className="contractor-banner"><Avatar person={contractor}/><div><b>{contractor.name}</b><span>{contractor.company} · {contractor.specialty_label}</span></div><span className="available"><span/>Available for dispatch</span><div className="banner-metrics"><span><Star size={14} fill="currentColor"/>{contractor.rating}</span><span>{contractor.jobs_completed} jobs completed</span></div></div>}
+    {contractor && status && <div className="contractor-banner"><Avatar person={contractor}/><div><b>{contractor.name}</b><span>{contractor.company} · {contractor.specialty_label}</span></div><span className={cn("dispatch-chip", `dispatch-${status.tone}`)}><span/>{status.label}</span><div className="banner-metrics"><span><Star size={14} fill="currentColor"/>{contractor.rating}</span><span>{contractor.jobs_completed} jobs completed</span></div></div>}
     <div className="section-row"><div><h2>Qualified work</h2><p>{filtered.length ? `${filtered.length} request${filtered.length === 1 ? "" : "s"} matched to your specialty.` : "No open jobs are currently matched to this persona."}</p></div></div>
     {filtered.length ? <div className="job-grid">{filtered.map((ticket) => <JobCard key={ticket.id} ticket={ticket} onOpen={onOpen}/>)}</div> : <div className="empty-state"><span className="empty-icon"><BadgeCheck size={24}/></span><h3>You’re all caught up</h3><p>New jobs matched to your specialty will appear here.</p></div>}
   </section>;

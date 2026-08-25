@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import base64
 import json
 import shutil
 import uuid
 from datetime import datetime, timezone
-from mimetypes import guess_type
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
@@ -18,7 +15,7 @@ from app.schemas import AcceptIn, ConfirmIn, StatusUpdateIn, TicketListOut, Tick
 from app.seed import RESTAURANT, seed_core
 from app.serializers import ticket_out
 from app.services.matching import match_contractors
-from app.services.media import save_upload
+from app.services.media import encode_photo_for_triage, save_upload
 from app.services.triage import analyze_issue
 from app.services.workflow import add_event, advance_contractor_status
 
@@ -43,14 +40,7 @@ def _get_ticket(db: Session, ticket_id: str) -> Ticket:
 
 
 def _image_data_url(photo_path: str | None) -> str | None:
-    if not photo_path:
-        return None
-    path = settings.upload_path / photo_path
-    if not path.exists():
-        return None
-    mime = guess_type(path.name)[0] or "image/jpeg"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{encoded}"
+    return encode_photo_for_triage(photo_path)
 
 
 @router.post("", response_model=TicketOut)

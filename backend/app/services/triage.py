@@ -92,6 +92,7 @@ JSON_SCHEMA = {
             "recommended_specialty": {"type": "string"},
             "observations": {"type": "array", "items": {"type": "string"}},
             "immediate_action": {"type": "string"},
+            "photo_matches_report": {"type": "boolean"},
         },
         "required": [
             "category",
@@ -109,10 +110,15 @@ Analyze the staff report and optional photo. Return JSON only.
 Do not claim certainty. Phrase possible_issue as a possibility.
 Never give unsafe repair instructions or guarantees.
 
+If a photo is attached, look at it before classifying.
+Set photo_matches_report to true only if the photo clearly shows the reported restaurant equipment or issue.
+If the photo shows something else, set photo_matches_report to false, use category general_maintenance, and say what the photo actually shows in observations.
+
 Use exactly these values:
 category: commercial_refrigeration | hvac | plumbing | electrical | cooking_equipment | dishwashing | general_maintenance
 severity: critical | high | medium | low
 recommended_specialty: refrigeration | hvac | plumbing | electrical | cooking_equipment | dishwashing | general_facilities
+photo_matches_report: true | false
 observations: 2 to 4 short strings
 """
 
@@ -169,7 +175,30 @@ def fallback_triage(description: str, urgency: str) -> TriageResult:
     )
 
 
-def _hint_match(value: str, hints: list[tuple[tuple[str, ...], Any]], default: Any) -> Any:
+def apply_photo_evidence(parsed: dict[str, Any], has_photo: bool) -> dict[str, Any]:
+    result = dict(parsed)
+    if not has_photo:
+        return result
+    matches = result.get("photo_matches_report")
+    if isinstance(matches, str):
+        matches = matches.strip().lower() in {"true", "yes", "1"}
+    if matches is not False:
+        return result
+    result["category"] = Category.general_maintenance.value
+    result["recommended_specialty"] = Specialty.general_facilities.value
+    result["severity"] = "medium"
+    observations = result.get("observations") or []
+    if isinstance(observations, str):
+        observations = [observations]
+    note = "The attached photo does not show the reported equipment issue, so this is treated as unverified until a technician checks onsite."
+    cleaned = [str(item).strip() for item in observations if str(item).strip() and str(item).strip() != note]
+    result["observations"] = [note, *cleaned][:4]
+    return result
+
+
+def _is_image_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(term in text for term in ("image", "vision", "media type", "unsupported image", "invalid image"))
     raw = value.lower().replace(" ", "_")
     for keys, mapped in hints:
         if any(key in raw for key in keys):
@@ -272,7 +301,7 @@ async def _call_openrouter(
         }
     ]
     if image_data_url:
-        user_content.append({"type": "image_url", "image_url": {"url": image_data_url}})
+        user_content.append({"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}})
 
     payload: dict[str, Any] = {
         "model": settings.openrouter_model,
@@ -321,7 +350,7 @@ async def analyze_issue(
 
     last_error: Exception | None = None
     image = _usable_image(image_data_url)
-    attempts = [(image, True), (image, False), (None, True), (None, False)]
+    attempts: list[tuple[Optional[str], bool]] = [(image, True), (image, False)]
     seen: set[tuple[bool, bool]] = set()
     for img, use_schema in attempts:
         key = (bool(img), use_schema)
@@ -330,6 +359,7 @@ async def analyze_issue(
         seen.add(key)
         try:
             parsed, model_id = await _call_openrouter(description, urgency, location_note, img, use_schema)
+            parsed = apply_photo_evidence(parsed, has_photo=bool(img))
             result = TriageResult.model_validate(
                 {**_normalize_parsed(parsed, urgency), "source": "openrouter", "model_id": model_id}
             )
@@ -346,6 +376,31 @@ async def analyze_issue(
             last_error = exc
             logger.warning("OpenRouter triage attempt failed (image=%s schema=%s): %s", bool(img), use_schema, exc)
             continue
+
+    if image and last_error and _is_image_error(last_error):
+        for use_schema in (True, False):
+            try:
+                parsed, model_id = await _call_openrouter(description, urgency, location_note, None, use_schema)
+                result = TriageResult.model_validate(
+                    {**_normalize_parsed(parsed, urgency), "source": "openrouter", "model_id": model_id}
+                )
+                expected = CATEGORY_TO_SPECIALTY[result.category]
+                if result.recommended_specialty != expected:
+                    result.recommended_specialty = expected
+                if len(result.observations) < 2:
+                    result.observations = [
+                        *result.observations,
+                        "A technician should verify the issue onsite before any repair.",
+                    ][:4]
+                result.observations = [
+                    "The photo could not be analyzed, so this assessment is based on the written report only.",
+                    *result.observations,
+                ][:4]
+                return result
+            except (httpx.HTTPError, KeyError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+                last_error = exc
+                logger.warning("OpenRouter text-only triage attempt failed (schema=%s): %s", use_schema, exc)
+                continue
 
     fallback = fallback_triage(description, urgency)
     if last_error:

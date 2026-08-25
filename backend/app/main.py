@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.models import Ticket
-from app.routers import contractors, tickets
+from app.routers import contractors, restaurants, tickets
 from app.schemas import HealthOut
 from app.seed import seed_core
 from app.services.media import ensure_runtime_dirs, runtime_writable
@@ -26,12 +26,14 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
+        allow_origin_regex=r"https://.*\.vercel\.app",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.include_router(tickets.router)
     app.include_router(contractors.router)
+    app.include_router(restaurants.router)
 
     upload_root = settings.upload_path
     upload_root.mkdir(parents=True, exist_ok=True)
