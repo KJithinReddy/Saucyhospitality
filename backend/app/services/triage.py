@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.schemas import CATEGORY_TO_SPECIALTY, Category, Severity, Specialty
@@ -196,9 +196,15 @@ def apply_photo_evidence(parsed: dict[str, Any], has_photo: bool) -> dict[str, A
     return result
 
 
+HintT = TypeVar("HintT")
+
+
 def _is_image_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(term in text for term in ("image", "vision", "media type", "unsupported image", "invalid image"))
+
+
+def _hint_match(value: str, hints: list[tuple[tuple[str, ...], HintT]], default: HintT) -> HintT:
     raw = value.lower().replace(" ", "_")
     for keys, mapped in hints:
         if any(key in raw for key in keys):
@@ -372,7 +378,7 @@ async def analyze_issue(
                     "A technician should verify the issue onsite before any repair.",
                 ][:4]
             return result
-        except (httpx.HTTPError, KeyError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+        except Exception as exc:
             last_error = exc
             logger.warning("OpenRouter triage attempt failed (image=%s schema=%s): %s", bool(img), use_schema, exc)
             continue
@@ -397,7 +403,7 @@ async def analyze_issue(
                     *result.observations,
                 ][:4]
                 return result
-            except (httpx.HTTPError, KeyError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+            except Exception as exc:
                 last_error = exc
                 logger.warning("OpenRouter text-only triage attempt failed (schema=%s): %s", use_schema, exc)
                 continue

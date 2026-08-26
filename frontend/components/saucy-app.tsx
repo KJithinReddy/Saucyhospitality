@@ -101,6 +101,7 @@ export function SaucyApp() {
   const [contractorId, setContractorId] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [ticketError, setTicketError] = useState("");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
 
@@ -142,13 +143,18 @@ export function SaucyApp() {
   }, [loading, pathname]);
   useEffect(() => {
     const match = pathname.match(/\/tickets\/([^/]+)/);
-    if (!match) { setTicket(null); return; }
+    if (!match) { setTicket(null); setTicketError(""); return; }
     let cancelled = false;
     const load = async () => {
       try {
         const data = await fetchApi<Ticket>(`/api/tickets/${match[1]}`);
-        if (!cancelled) setTicket(data);
-      } catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : "Unable to load ticket."); }
+        if (!cancelled) { setTicket(data); setTicketError(""); }
+      } catch (error) {
+        if (!cancelled) {
+          setTicket(null);
+          setTicketError(error instanceof Error ? error.message : "Unable to load ticket.");
+        }
+      }
     };
     load();
     const timer = window.setInterval(load, 4000);
@@ -188,7 +194,7 @@ export function SaucyApp() {
         {view === "restaurant" && <RestaurantDashboard tickets={tickets} onReport={() => navigate("/restaurant/report")} onOpen={(id) => navigate(`/tickets/${id}`)} />}
         {view === "report" && <ReportIssue onCancel={() => navigate("/restaurant")} onCreated={(id) => navigate(`/tickets/${id}`)} setNotice={setNotice} />}
         {view === "contractor" && <ContractorDashboard tickets={tickets} contractors={contractors} contractorId={contractorId} onSelect={selectContractor} onOpen={(id) => navigate(`/tickets/${id}`)} />}
-        {view === "ticket" && <TicketDetail ticket={ticket} role={role} contractorId={contractorId} onBack={() => navigate(role === "contractor" ? "/contractor" : "/restaurant")} onUpdate={updateTicket} onSwitchRole={switchRole} setNotice={setNotice} />}
+        {view === "ticket" && <TicketDetail ticket={ticket} ticketError={ticketError} role={role} contractorId={contractorId} onBack={() => navigate(role === "contractor" ? "/contractor" : "/restaurant")} onUpdate={updateTicket} onSwitchRole={switchRole} setNotice={setNotice} />}
       </main>
     </div>
   );
@@ -251,7 +257,11 @@ function ReportIssue({ onCancel, onCreated, setNotice }: { onCancel: () => void;
     setSubmitting(true);
     try {
       const ticket = await fetchApi<Ticket>("/api/tickets", { method: "POST", body: form });
-      await fetchApi<Ticket>(`/api/tickets/${ticket.id}/triage`, { method: "POST" });
+      try {
+        await fetchApi<Ticket>(`/api/tickets/${ticket.id}/triage`, { method: "POST" });
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Assessment is still pending. You can retry it from the request.");
+      }
       onCreated(ticket.id);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to create request."); } finally { setSubmitting(false); }
   };
@@ -293,7 +303,7 @@ function JobCard({ ticket, onOpen }: { ticket: Ticket; onOpen: (id: string) => v
   return <button className="job-card" onClick={() => onOpen(ticket.id)}><div className="job-card-head"><Status status={ticket.status} label={ticket.status_label}/><span className="job-time"><Clock3 size={14}/><DateLabel date={ticket.created_at}/></span></div><h3>{ticket.assessment?.category_label || "Maintenance request"}</h3><p className="job-desc">{ticket.description}</p><div className="job-meta"><span><MapPin size={15}/>{ticket.restaurant.neighborhood}</span><span><AlertTriangle size={15}/>{ticket.urgency} priority</span></div>{candidate && <div className="job-match"><Sparkles size={15}/>{candidate.eta_minutes} min away · strong specialty match <ChevronRight size={16}/></div>}</button>;
 }
 
-function TicketDetail({ ticket, role, contractorId, onBack, onUpdate, onSwitchRole, setNotice }: { ticket: Ticket | null; role: "restaurant" | "contractor"; contractorId: string; onBack: () => void; onUpdate: (ticket: Ticket) => void; onSwitchRole: (role: "restaurant" | "contractor") => void; setNotice: (message: string) => void }) {
+function TicketDetail({ ticket, ticketError, role, contractorId, onBack, onUpdate, onSwitchRole, setNotice }: { ticket: Ticket | null; ticketError: string; role: "restaurant" | "contractor"; contractorId: string; onBack: () => void; onUpdate: (ticket: Ticket) => void; onSwitchRole: (role: "restaurant" | "contractor") => void; setNotice: (message: string) => void }) {
   const [busy, setBusy] = useState(false);
   const isMatchedContractor = ticket?.matches.some((match) => match.contractor.id === contractorId);
   const isAssigned = ticket?.assigned_contractor?.id === contractorId;
@@ -302,6 +312,7 @@ function TicketDetail({ ticket, role, contractorId, onBack, onUpdate, onSwitchRo
     try { const updated = await fetchApi<Ticket>(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }); onUpdate(updated); }
     catch (error) { setNotice(error instanceof Error ? error.message : "Could not update the repair."); } finally { setBusy(false); }
   };
+  if (ticketError) return <section className="page detail-page"><button className="back-button" onClick={onBack}><ArrowLeft size={16}/>Back to {role === "contractor" ? "contractor network" : "restaurant dashboard"}</button><div className="empty-state"><span className="empty-icon"><AlertTriangle size={24}/></span><h3>Repair request not found</h3><p>{ticketError}</p><button className="button button-primary" onClick={onBack}>Return to dashboard</button></div></section>;
   if (!ticket) return <section className="page detail-page"><div className="detail-loading"><Loader2 className="spin"/>Loading repair request…</div></section>;
   const nextAction: [string, string, ReactNode] | null = ticket.status === "accepted" ? ["en_route", "Mark en route", <Truck key="truck" size={17}/>] : ticket.status === "en_route" ? ["in_progress", "Start repair", <Wrench key="wrench" size={17}/>] : ticket.status === "in_progress" ? ["completed", "Mark repair complete", <CheckCircle2 key="check" size={17}/>] : null;
   return <section className="page detail-page"><button className="back-button" onClick={onBack}><ArrowLeft size={16}/>Back to {role === "contractor" ? "contractor network" : "restaurant dashboard"}</button>
@@ -310,20 +321,23 @@ function TicketDetail({ ticket, role, contractorId, onBack, onUpdate, onSwitchRo
       {ticket.assessment && <section className="detail-card ai-card"><div className="card-heading"><div><p className="eyebrow eyebrow-ai"><Sparkles size={14}/>AI-ASSISTED ASSESSMENT</p><h2>Recommended next move</h2></div><span className="advisory">Advisory · verify onsite</span></div><div className="assessment-grid"><div><span>Likely category</span><b>{ticket.assessment.category_label}</b></div><div><span>Suggested severity</span><Status status={ticket.assessment.severity} label={ticket.assessment.severity}/></div><div><span>Recommended trade</span><b>{ticket.assessment.recommended_specialty_label}</b></div></div><div className="possible-issue"><AlertTriangle size={17}/><div><b>{ticket.assessment.possible_issue}</b><p>{ticket.assessment.observations[0]}</p></div></div><div className="immediate-action"><ShieldCheck size={17}/><span><b>Until a technician arrives:</b> {ticket.assessment.immediate_action}</span></div></section>}
       {role === "restaurant" && <section className="detail-card"><div className="card-heading"><div><p className="eyebrow">REPAIR TIMELINE</p><h2>Every handoff, in one place</h2></div></div><Timeline events={ticket.events}/></section>}
       </div>
-      <aside className="detail-side"><ActionPanel ticket={ticket} role={role} isMatched={Boolean(isMatchedContractor)} isAssigned={Boolean(isAssigned)} busy={busy} nextAction={nextAction} onAccept={() => action(`/api/tickets/${ticket.id}/accept`, "POST", { contractor_id: contractorId })} onProgress={(status) => action(`/api/tickets/${ticket.id}/status`, "PATCH", { contractor_id: contractorId, status, note: status === "completed" ? "Cooling performance restored and leak area dried. Monitor temperatures through the next service." : undefined })} onConfirm={() => action(`/api/tickets/${ticket.id}/confirm`, "POST", { note: "Kitchen confirmed the unit is holding temperature." })} onSwitchRole={onSwitchRole}/>{role === "restaurant" && ticket.status === "matching" && <CandidateList candidates={ticket.matches}/>}</aside>
+      <aside className="detail-side"><ActionPanel ticket={ticket} role={role} isMatched={Boolean(isMatchedContractor)} isAssigned={Boolean(isAssigned)} busy={busy} nextAction={nextAction} onAccept={() => action(`/api/tickets/${ticket.id}/accept`, "POST", { contractor_id: contractorId })} onRetry={() => action(`/api/tickets/${ticket.id}/triage`, "POST")} onProgress={(status) => action(`/api/tickets/${ticket.id}/status`, "PATCH", { contractor_id: contractorId, status, note: status === "completed" ? "Cooling performance restored and leak area dried. Monitor temperatures through the next service." : undefined })} onConfirm={() => action(`/api/tickets/${ticket.id}/confirm`, "POST", { note: "Kitchen confirmed the unit is holding temperature." })} onSwitchRole={onSwitchRole}/>{role === "restaurant" && ticket.status === "matching" && <CandidateList candidates={ticket.matches}/>}</aside>
     </div>
   </section>;
 }
 function Timeline({ events }: { events: Event[] }) {
   return <div className="timeline">{events.map((event, index) => <div className="timeline-event" key={event.id}><div className={cn("timeline-dot", index === events.length - 1 && "timeline-current")}><Check size={12}/></div><div><div className="timeline-line"><b>{event.status_label}</b><span><DateLabel date={event.created_at}/></span></div><p>{event.note || `${event.actor_name} updated this repair.`}</p><small>{event.actor_role === "system" ? "Saucy" : event.actor_name}</small></div></div>)}</div>;
 }
-function ActionPanel({ ticket, role, isMatched, isAssigned, busy, nextAction, onAccept, onProgress, onConfirm, onSwitchRole }: { ticket: Ticket; role: "restaurant" | "contractor"; isMatched: boolean; isAssigned: boolean; busy: boolean; nextAction: [string, string, ReactNode] | null; onAccept: () => void; onProgress: (status: string) => void; onConfirm: () => void; onSwitchRole: (role: "restaurant" | "contractor") => void }) {
+function ActionPanel({ ticket, role, isMatched, isAssigned, busy, nextAction, onAccept, onRetry, onProgress, onConfirm, onSwitchRole }: { ticket: Ticket; role: "restaurant" | "contractor"; isMatched: boolean; isAssigned: boolean; busy: boolean; nextAction: [string, string, ReactNode] | null; onAccept: () => void; onRetry: () => void; onProgress: (status: string) => void; onConfirm: () => void; onSwitchRole: (role: "restaurant" | "contractor") => void }) {
+  const pendingAssessment = ticket.status === "submitted" || ticket.status === "triaged";
   if (role === "contractor") {
+    if (pendingAssessment) return <section className="action-card"><span className="action-icon action-amber"><Loader2 className="spin" size={20}/></span><h3>Not ready for dispatch</h3><p>This request is still being assessed. It will appear as a job once a trade match is ready.</p></section>;
     if (ticket.status === "matching" && isMatched) return <section className="action-card contractor-action"><span className="action-icon action-coral"><Sparkles size={20}/></span><h3>Ready for dispatch?</h3><p>This restaurant needs a qualified {ticket.assessment?.recommended_specialty_label || "technician"}.</p><button className="button button-primary button-full" disabled={busy} onClick={onAccept}>{busy ? <Loader2 className="spin" size={17}/> : <Check size={17}/>}Accept job</button><small>Accepting reserves this request for your team.</small></section>;
     if (isAssigned && nextAction) return <section className="action-card contractor-action"><span className="action-icon action-blue">{nextAction[2]}</span><h3>{nextAction[1]}</h3><p>Keep the restaurant team informed as you work through the repair.</p><button className="button button-primary button-full" disabled={busy} onClick={() => onProgress(nextAction[0])}>{busy ? <Loader2 className="spin" size={17}/> : nextAction[2]}{nextAction[1]}</button></section>;
     if (isAssigned && ticket.status === "completed") return <section className="action-card"><span className="action-icon action-green"><CheckCircle2 size={20}/></span><h3>Repair marked complete</h3><p>Waiting for the restaurant team to confirm the equipment is back in service.</p></section>;
   }
   if (role === "restaurant") {
+    if (pendingAssessment) return <section className="action-card"><span className="action-icon action-amber"><Loader2 className="spin" size={20}/></span><h3>Assessment pending</h3><p>Saucy is still organizing this report and matching a technician. Retry if this is taking too long.</p><button className="button button-primary button-full" disabled={busy} onClick={onRetry}>{busy ? <Loader2 className="spin" size={17}/> : <Sparkles size={17}/>}Retry assessment</button></section>;
     if (ticket.status === "matching") return <section className="action-card"><span className="action-icon action-amber"><Loader2 className="spin" size={20}/></span><h3>Finding the right technician</h3><p>We matched this request by trade, availability, and travel time. A contractor can accept it now.</p><button className="button button-secondary button-full" onClick={() => onSwitchRole("contractor")}><Wrench size={17}/>View contractor side</button></section>;
     if (ticket.assigned_contractor) return <section className="action-card assigned-card"><div className="assigned-head"><Avatar person={ticket.assigned_contractor}/><div><b>{ticket.assigned_contractor.name}</b><span>{ticket.assigned_contractor.company}</span></div></div><div className="assigned-meta"><span><Star size={14} fill="currentColor"/>{ticket.assigned_contractor.rating} rating</span><span><Navigation size={14}/>{ticket.assigned_contractor.eta_minutes} min away</span></div>{ticket.status === "completed" ? <button className="button button-primary button-full" disabled={busy} onClick={onConfirm}>{busy ? <Loader2 className="spin" size={17}/> : <CheckCircle2 size={17}/>}Confirm repair complete</button> : <button className="button button-secondary button-full" onClick={() => onSwitchRole("contractor")}><Wrench size={17}/>Continue demo as contractor</button>}</section>;
     if (ticket.status === "confirmed") return <section className="action-card"><span className="action-icon action-green"><BadgeCheck size={20}/></span><h3>Repair confirmed</h3><p>The restaurant team confirmed this issue is resolved. Nice work.</p></section>;

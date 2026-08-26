@@ -6,7 +6,7 @@ from app.main import app
 from app.schemas import TicketStatus
 from app.services.matching import match_contractors
 from app.services.triage import fallback_triage
-from app.schemas import Category, Severity
+from app.schemas import Category, Severity, Specialty
 
 
 client = TestClient(app)
@@ -135,3 +135,84 @@ def test_matching_photo_keeps_reported_trade():
     result = apply_photo_evidence(parsed, has_photo=True)
     assert result["category"] == "plumbing"
     assert result["severity"] == "high"
+
+
+def test_hint_match_maps_messy_openrouter_labels():
+    from app.services.triage import CATEGORY_HINTS, SPECIALTY_HINTS, _hint_match
+
+    assert _hint_match("Commercial Refrigeration", CATEGORY_HINTS, Category.general_maintenance) == Category.commercial_refrigeration
+    assert _hint_match("Commercial Refrigeration Technician", SPECIALTY_HINTS, Specialty.general_facilities) == Specialty.refrigeration
+    assert _hint_match("unknown trade", CATEGORY_HINTS, Category.general_maintenance) == Category.general_maintenance
+
+
+def test_normalize_parsed_keeps_valid_openrouter_json():
+    from app.services.triage import _normalize_parsed
+
+    result = _normalize_parsed(
+        {
+            "category": "commercial_refrigeration",
+            "severity": "critical",
+            "possible_issue": "Possible failed evaporator fan",
+            "recommended_specialty": "refrigeration",
+            "observations": ["Walk-in is warm.", "Water is pooling near the door."],
+            "immediate_action": "Keep the door closed and wait for a technician.",
+        },
+        "critical",
+    )
+    assert result["category"] == "commercial_refrigeration"
+    assert result["recommended_specialty"] == "refrigeration"
+    assert result["severity"] == "critical"
+
+
+def test_analyze_issue_uses_openrouter_success_payload():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.services import triage
+
+    payload = {
+        "category": "commercial_refrigeration",
+        "severity": "critical",
+        "possible_issue": "Possible failed evaporator fan motor",
+        "recommended_specialty": "refrigeration",
+        "observations": ["Walk-in is warm.", "Water is pooling near the door."],
+        "immediate_action": "Keep the door closed and wait for a technician.",
+        "photo_matches_report": True,
+    }
+
+    async def run():
+        with patch.object(triage.settings, "openrouter_api_key", "test-key"):
+            with patch.object(triage, "_call_openrouter", AsyncMock(return_value=(payload, "test-model"))):
+                return await triage.analyze_issue(
+                    "The walk-in refrigerator isn't getting cold.",
+                    "critical",
+                    "Walk-in cooler",
+                    None,
+                )
+
+    result = asyncio.run(run())
+    assert result.source == "openrouter"
+    assert result.model_id == "test-model"
+    assert result.category == Category.commercial_refrigeration
+    assert result.recommended_specialty == Specialty.refrigeration
+
+
+def test_analyze_issue_falls_back_on_unexpected_openrouter_error():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.services import triage
+
+    async def run():
+        with patch.object(triage.settings, "openrouter_api_key", "test-key"):
+            with patch.object(triage, "_call_openrouter", AsyncMock(side_effect=RuntimeError("boom"))):
+                return await triage.analyze_issue(
+                    "The walk-in refrigerator isn't getting cold.",
+                    "critical",
+                    "Walk-in cooler",
+                    None,
+                )
+
+    result = asyncio.run(run())
+    assert result.source == "fallback"
+    assert result.category == Category.commercial_refrigeration
